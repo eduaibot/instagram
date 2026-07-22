@@ -10,7 +10,7 @@ st.set_page_config(page_title="Instagram Login", layout="centered")
 CLIENT_ID = "1589243162990530"
 
 # Địa chỉ chính trang Streamlit này (nơi nhận Token về)
-REDIRECT_URI = "https://instagram.streamlit.app/"
+REDIRECT_URI = "https://instagrammeta.streamlit.app/"
 
 # 1. Bắt các tham số trên URL xem đã có Access Token chưa
 # (Facebook trả về dạng https://instagram.streamlit.app/#access_token=EAAG...)
