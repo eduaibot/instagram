@@ -29,19 +29,15 @@ code = query_params.get("code")
 returned_state = query_params.get("state")
 error = query_params.get("error")
 
-# ==============================================
-# CÓ LỖI TỪ FACEBOOK
-# ==============================================
 if error:
     error_desc = query_params.get("error_description", "Không rõ lỗi")
     st.error(f"❌ Lỗi: {error_desc}")
     st.stop()
 
 # ==============================================
-# BƯỚC 2: NHẬN ĐƯỢC CODE → ĐỔI THÀNH TOKEN
+# BƯỚC 2: CÓ CODE → ĐỔI THÀNH TOKEN
 # ==============================================
 if code:
-    # Kiểm tra bảo mật state
     if returned_state != st.session_state.oauth_state:
         st.error("⚠️ Lỗi bảo mật. Vui lòng thử lại.")
         st.stop()
@@ -50,7 +46,6 @@ if code:
 
     import requests
 
-    # Gọi Facebook để đổi Code → Access Token
     token_url = f"https://graph.facebook.com/{FB_API_VERSION}/oauth/access_token"
     token_params = {
         "client_id": CLIENT_ID,
@@ -69,9 +64,7 @@ if code:
     access_token = token_data["access_token"]
     expires_in = token_data.get("expires_in", 5184000)
 
-    # ==============================================
-    # BƯỚC 3: LẤY THÔNG TIN USER
-    # ==============================================
+    # Lấy thông tin user
     profile_url = f"https://graph.facebook.com/{FB_API_VERSION}/me"
     profile_params = {
         "fields": "id,name,email",
@@ -80,9 +73,7 @@ if code:
     profile_res = requests.get(profile_url, params=profile_params)
     profile = profile_res.json()
 
-    # ==============================================
-    # BƯỚC 4: LƯU VÀO SUPABASE
-    # ==============================================
+    # Lưu vào Supabase
     try:
         from supabase import create_client
         supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
@@ -92,7 +83,7 @@ if code:
             "name": profile.get("name"),
             "email": profile.get("email"),
             "access_token": access_token,
-            "expires_at": (st.session_state.get("_now") or __import__("datetime").datetime.utcnow() + __import__("datetime").timedelta(seconds=expires_in)).isoformat()
+            "expires_at": (__import__("datetime").datetime.utcnow() + __import__("datetime").timedelta(seconds=expires_in)).isoformat()
         }], on_conflict="facebook_id").execute()
 
         if db_error:
@@ -100,46 +91,53 @@ if code:
     except Exception as e:
         st.warning(f"⚠️ Lỗi kết nối Supabase: {e}")
 
-    # ==============================================
-    # BƯỚC 5: THÀNH CÔNG → CHUYỂN ĐẾN INSTAGRAM
-    # ==============================================
-    st.success(f"✅ Xin chào {profile.get('name', 'Bạn')}! Đang mở Instagram...")
-
-    # Xóa tham số code khỏi URL cho sạch
+    # Xóa tham số code khỏi URL
     st.query_params.clear()
 
-    # Chuyển hướng đến Instagram
+    # Chuyển đến Instagram
+    st.success(f"✅ Xin chào {profile.get('name', 'Bạn')}! Đang mở Instagram...")
     st.markdown("""
     <script>
     setTimeout(() => {
-        window.location.href = "instagram://";
+        window.top.location.href = "instagram://";
     }, 1000);
     setTimeout(() => {
-        window.location.href = "https://www.instagram.com";
+        window.top.location.href = "https://www.instagram.com";
     }, 3000);
     </script>
     """, unsafe_allow_html=True)
-
     st.stop()
 
 # ==============================================
-# BƯỚC 0: CHƯA CÓ CODE → CHUYỂN ĐẾN FACEBOOK ĐĂNG NHẬP
+# BƯỚC 0: CHƯA CÓ CODE → TỰ ĐỘNG CHUYỂN ĐẾN FACEBOOK
 # ==============================================
 auth_url = (
     f"https://www.facebook.com/{FB_API_VERSION}/dialog/oauth?"
     f"client_id={urllib.parse.quote(CLIENT_ID)}"
     f"&redirect_uri={urllib.parse.quote(REDIRECT_URI)}"
-    f"&response_type=code"  # ⚠️ Dùng CODE thay vì Token trực tiếp
+    f"&response_type=code"
     f"&scope=email,public_profile"
     f"&state={urllib.parse.quote(st.session_state.oauth_state)}"
 )
 
 st.info("⏳ Đang chuyển hướng đến Facebook...")
-st.markdown(f"[👉 Nhấp vào đây nếu không tự động chuyển hướng]({auth_url})")
 
-# Tự động chuyển hướng
-st.components.v1.html(f"""
+# ✅ TỰ ĐỘNG CHUYỂN HƯỚNG ĐÚNG CÁCH — Dùng target="_top" và parent.window.location
+redirect_script = f"""
 <script>
-window.location.href = "{auth_url}";
+(function() {{
+    // Cách 1: Dùng parent.window để điều khiển trang chính
+    if (window.top !== window.self) {{
+        window.top.location.href = "{auth_url}";
+    }} else {{
+        // Cách 2: Nếu đã ở trang chính
+        window.location.href = "{auth_url}";
+    }}
+}})();
 </script>
-""", height=0)
+"""
+
+st.markdown(redirect_script, unsafe_allow_html=True)
+
+# Nút dự phòng
+st.markdown(f"[👉 Nhấp vào đây nếu không tự động chuyển hướng]({auth_url})")
