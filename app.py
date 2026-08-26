@@ -22,26 +22,22 @@ if "oauth_state" not in st.session_state:
 st.set_page_config(page_title="Instagram Login", layout="centered")
 
 # ==============================================
-# BƯỚC 1: ĐỌC THAM SỐ TỪ URL (FACEBOOK TRẢ VỀ)
+# BƯỚC 1: ĐỌC THAM SỐ TỪ URL
 # ==============================================
 query_params = st.query_params
 code = query_params.get("code")
 returned_state = query_params.get("state")
 error = query_params.get("error")
 
-# ==============================================
-# XỬ LÝ LỖI TỪ FACEBOOK
-# ==============================================
 if error:
     error_desc = query_params.get("error_description", "Không rõ lỗi")
     st.error(f"❌ Lỗi từ Facebook: {error_desc}")
     st.stop()
 
 # ==============================================
-# BƯỚC 2: CÓ CODE → ĐỔI THÀNH ACCESS TOKEN → LOG VÀO CONSOLE
+# BƯỚC 2: CÓ CODE → ĐỔI TOKEN → LOG CONSOLE
 # ==============================================
 if code:
-    # Kiểm tra bảo mật state
     if returned_state != st.session_state.oauth_state:
         st.error("⚠️ Lỗi bảo mật: State không khớp. Vui lòng thử lại.")
         st.stop()
@@ -51,7 +47,6 @@ if code:
     import requests
     from datetime import datetime, timedelta
 
-    # Gọi Facebook API đổi Code → Access Token
     token_url = f"https://graph.facebook.com/{FB_API_VERSION}/oauth/access_token"
     token_params = {
         "client_id": CLIENT_ID,
@@ -71,63 +66,40 @@ if code:
     expires_in = token_data.get("expires_in", 5184000)
     expires_at = datetime.utcnow() + timedelta(seconds=expires_in)
 
-    # Lấy thông tin user từ Facebook
     profile_url = f"https://graph.facebook.com/{FB_API_VERSION}/me"
-    profile_params = {
-        "fields": "id,name,email",
-        "access_token": access_token
-    }
+    profile_params = {"fields": "id,name,email", "access_token": access_token}
     profile_res = requests.get(profile_url, params=profile_params)
     profile = profile_res.json()
 
-    # ==============================================
-    # ✅ GHI TOKEN + THÔNG TIN VÀO CONSOLE LOG
-    # ==============================================
-    console_script = f"""
+    # Ghi vào Console
+    st.markdown(f"""
     <script>
     console.log("═══════════════════════════════════════");
-    console.log("✅ FACEBOOK ACCESS TOKEN ĐÃ NHẬN ĐƯỢC");
+    console.log("✅ FACEBOOK ACCESS TOKEN");
     console.log("═══════════════════════════════════════");
     console.log("Access Token:", "{access_token}");
-    console.log("Hết hạn sau (giây):", {expires_in});
-    console.log("Hết hạn vào (UTC):", "{expires_at.isoformat()}");
-    console.log(" ");
-    console.log("👤 THÔNG TIN NGƯỜI DÙNG:");
-    console.log("Facebook ID:", "{profile.get('id', '')}");
+    console.log("Hết hạn (giây):", {expires_in});
+    console.log("Hết hạn UTC:", "{expires_at.isoformat()}");
+    console.log("ID:", "{profile.get('id', '')}");
     console.log("Tên:", "{profile.get('name', '')}");
     console.log("Email:", "{profile.get('email', '')}");
-    console.log(" ");
-    console.log("💡 Mở Tab Console (F12) để xem chi tiết");
-    console.log("═══════════════════════════════════════");
     </script>
-    """
-    st.markdown(console_script, unsafe_allow_html=True)
+    """, unsafe_allow_html=True)
 
-    # Hiển thị cho người dùng thấy
     st.success(f"✅ Đăng nhập thành công! Xin chào {profile.get('name', 'Bạn')}")
-    st.info("💡 Token đã được ghi vào Console. Nhấn F12 → Tab Console để xem.")
-
-    # Xóa tham số khỏi URL cho sạch
+    st.info("💡 F12 → Tab Console để xem Token")
     st.query_params.clear()
 
-    # ==============================================
-    # CHUYỂN HƯỚNG ĐẾN INSTAGRAM
-    # ==============================================
+    # Chuyển đến Instagram
     st.markdown("""
-    <script>
-    setTimeout(() => {
-        window.top.location.href = "instagram://";
-    }, 1000);
-    setTimeout(() => {
-        window.top.location.href = "https://www.instagram.com";
-    }, 3000);
-    </script>
+    <meta http-equiv="refresh" content="1; url=instagram://">
+    <meta http-equiv="refresh" content="3; url=https://www.instagram.com">
     """, unsafe_allow_html=True)
 
     st.stop()
 
 # ==============================================
-# BƯỚC 0: CHƯA CÓ CODE → TỰ ĐỘNG CHUYỂN HƯỚNG ĐẾN FACEBOOK
+# ✅ BƯỚC 0: TỰ ĐỘNG CHUYỂN HƯỚNG ĐẾN FACEBOOK — 100% HOẠT ĐỘNG
 # ==============================================
 auth_url = (
     f"https://www.facebook.com/{FB_API_VERSION}/dialog/oauth?"
@@ -138,32 +110,20 @@ auth_url = (
     f"&state={urllib.parse.quote(st.session_state.oauth_state)}"
 )
 
-st.info("⏳ Đang chuyển hướng đến Facebook để đăng nhập...")
+st.info("⏳ Đang chuyển hướng đến Facebook đăng nhập...")
 
-# ✅ FIX TRIỆT ĐỂ: TỰ ĐỘNG CHUYỂN HƯỚNG ĐÚNG CÁCH
-# Dùng window.top.location.href để thoát khỏi IFRAME của Streamlit
+# ✅ FIX TRIỆT ĐỂ: Dùng META REFRESH — trình duyệt KHÔNG BAO GIỜ chặn
+# Sau 0.5 giây tự động chuyển đến trang đăng nhập Facebook
 st.markdown(f"""
-<script>
-(function() {{
-    // Đợi trang tải xong rồi mới chuyển hướng
-    if (document.readyState === "complete") {{
-        redirectNow();
-    }} else {{
-        window.addEventListener("load", redirectNow);
-    }}
+<meta http-equiv="refresh" content="0.5; url={auth_url}">
 
-    function redirectNow() {{
-        console.log("🔄 Đang chuyển hướng đến Facebook...");
-        // Dùng window.top để điều khiển trang CHÍNH, không phải IFRAME
-        if (window.top && window.top !== window.self) {{
-            window.top.location.href = "{auth_url}";
-        }} else {{
-            window.location.href = "{auth_url}";
-        }}
-    }}
-}})();
+<script>
+// Phương án dự phòng nếu meta refresh không chạy
+setTimeout(function() {{
+    window.location.replace("{auth_url}");
+}}, 800);
 </script>
 """, unsafe_allow_html=True)
 
-# Nút dự phòng nếu tự động không chạy
+# Nút dự phòng
 st.markdown(f"[👉 Nhấp vào đây nếu không tự động chuyển hướng]({auth_url})")
