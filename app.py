@@ -1,28 +1,27 @@
 import streamlit as st
 import urllib.parse
 import secrets
+import requests
+from datetime import datetime, timedelta
 
 # ==============================================
-# CẤU HÌNH — PHẢI TRÙNG KHỚP 100% VỚI FACEBOOK DASHBOARD
+# CẤU HÌNH — ĐỀN ĐẦY ĐỦ TRƯỚC KHI DÙNG
 # ==============================================
 CLIENT_ID = "1589243162990530"
-CLIENT_SECRET = "Điền Client Secret từ Facebook Dashboard → Cài đặt → Ứng dụng"
-
-# ⚠️ PHẢI GIỐNG HỆT trong: URI chuyển hướng hợp lệ + Miền ứng dụng
+CLIENT_SECRET = st.secrets.get("facebook_client_secret", "Điền Client Secret tại đây")
 REDIRECT_URI = "https://instagrammeta.streamlit.app/"
-
 FB_API_VERSION = "v24.0"
 
 # ==============================================
-# TẠO STATE CHỐNG CSRF
+# KHỞI TẠO
 # ==============================================
+st.set_page_config(page_title="Đăng nhập Instagram", layout="centered")
+
 if "oauth_state" not in st.session_state:
     st.session_state.oauth_state = secrets.token_urlsafe(32)
 
-st.set_page_config(page_title="Instagram Login", layout="centered")
-
 # ==============================================
-# BƯỚC 1: ĐỌC THAM SỐ TỪ URL
+# BƯỚC 1: NHẬN CODE TỪ FACEBOOK SAU KHI ĐĂNG NHẬP
 # ==============================================
 query_params = st.query_params
 code = query_params.get("code")
@@ -30,22 +29,20 @@ returned_state = query_params.get("state")
 error = query_params.get("error")
 
 if error:
-    error_desc = query_params.get("error_description", "Không rõ lỗi")
-    st.error(f"❌ Lỗi từ Facebook: {error_desc}")
+    st.error(f"❌ Lỗi: {query_params.get('error_description', 'Không rõ')}")
+    st.link_button("🔄 Thử lại", REDIRECT_URI)
     st.stop()
 
 # ==============================================
-# BƯỚC 2: CÓ CODE → ĐỔI TOKEN → LOG CONSOLE
+# BƯỚC 2: ĐỔI CODE → TOKEN → HIỂN THỊ
 # ==============================================
 if code:
-    if returned_state != st.session_state.oauth_state:
-        st.error("⚠️ Lỗi bảo mật: State không khớp. Vui lòng thử lại.")
+    if not returned_state or returned_state != st.session_state.oauth_state:
+        st.error("⚠️ Lỗi bảo mật, vui lòng thử lại.")
+        st.link_button("🔄 Bắt đầu lại", REDIRECT_URI)
         st.stop()
 
     st.info("🔄 Đang xử lý...")
-
-    import requests
-    from datetime import datetime, timedelta
 
     token_url = f"https://graph.facebook.com/{FB_API_VERSION}/oauth/access_token"
     token_params = {
@@ -55,51 +52,54 @@ if code:
         "code": code
     }
 
-    token_res = requests.get(token_url, params=token_params)
-    token_data = token_res.json()
+    try:
+        token_res = requests.get(token_url, params=token_params, timeout=30)
+        token_data = token_res.json()
+    except Exception as e:
+        st.error(f"❌ Lỗi kết nối: {str(e)}")
+        st.stop()
 
     if "access_token" not in token_data:
-        st.error(f"❌ Không lấy được Token: {token_data}")
+        st.error(f"❌ Lỗi trả về: {token_data}")
         st.stop()
 
     access_token = token_data["access_token"]
-    expires_in = token_data.get("expires_in", 5184000)
-    expires_at = datetime.utcnow() + timedelta(seconds=expires_in)
+    expires_at = datetime.utcnow() + timedelta(seconds=token_data.get("expires_in", 5184000))
 
-    profile_url = f"https://graph.facebook.com/{FB_API_VERSION}/me"
-    profile_params = {"fields": "id,name,email", "access_token": access_token}
-    profile_res = requests.get(profile_url, params=profile_params)
+    # Lấy thông tin người dùng
+    profile_res = requests.get(
+        f"https://graph.facebook.com/{FB_API_VERSION}/me",
+        params={"fields": "id,name,email", "access_token": access_token},
+        timeout=30
+    )
     profile = profile_res.json()
 
-    # Ghi vào Console
+    # In ra Console trình duyệt
     st.markdown(f"""
     <script>
-    console.log("═══════════════════════════════════════");
-    console.log("✅ FACEBOOK ACCESS TOKEN");
-    console.log("═══════════════════════════════════════");
-    console.log("Access Token:", "{access_token}");
-    console.log("Hết hạn (giây):", {expires_in});
-    console.log("Hết hạn UTC:", "{expires_at.isoformat()}");
-    console.log("ID:", "{profile.get('id', '')}");
-    console.log("Tên:", "{profile.get('name', '')}");
-    console.log("Email:", "{profile.get('email', '')}");
+    console.log("=== FACEBOOK ACCESS TOKEN ===");
+    console.log(access_token = "{access_token}");
+    console.log("Hết hạn:", "{expires_at.isoformat()} UTC");
+    console.log("Tên:", "{profile.get('name','')}");
+    console.log("Email:", "{profile.get('email','')}");
     </script>
     """, unsafe_allow_html=True)
 
-    st.success(f"✅ Đăng nhập thành công! Xin chào {profile.get('name', 'Bạn')}")
-    st.info("💡 F12 → Tab Console để xem Token")
+    # Hiển thị kết quả
+    st.success(f"✅ Xin chào {profile.get('name', 'Bạn')}!")
+    st.info("💡 F12 → Console để xem Token")
+    with st.expander("📋 Xem Token trực tiếp"):
+        st.code(access_token)
+
     st.query_params.clear()
 
-    # Chuyển đến Instagram
-    st.markdown("""
-    <meta http-equiv="refresh" content="1; url=instagram://">
-    <meta http-equiv="refresh" content="3; url=https://www.instagram.com">
-    """, unsafe_allow_html=True)
-
+    # Tự chuyển đến Instagram sau 2 giây
+    st.markdown('<meta http-equiv="refresh" content="2; url=https://www.instagram.com">', unsafe_allow_html=True)
+    st.link_button("📸 Đi Instagram ngay", "https://www.instagram.com", type="primary")
     st.stop()
 
 # ==============================================
-# ✅ BƯỚC 0: TỰ ĐỘNG CHUYỂN HƯỚNG ĐẾN FACEBOOK — 100% HOẠT ĐỘNG
+# BƯỚC 0: AI MỞ LINK → TỰ NHẢY THẲNG ĐẾN FACEBOOK
 # ==============================================
 auth_url = (
     f"https://www.facebook.com/{FB_API_VERSION}/dialog/oauth?"
@@ -110,20 +110,12 @@ auth_url = (
     f"&state={urllib.parse.quote(st.session_state.oauth_state)}"
 )
 
-st.info("⏳ Đang chuyển hướng đến Facebook đăng nhập...")
-
-# ✅ FIX TRIỆT ĐỂ: Dùng META REFRESH — trình duyệt KHÔNG BAO GIỜ chặn
-# Sau 0.5 giây tự động chuyển đến trang đăng nhập Facebook
+# === TỰ ĐỘNG CHUYỂN HƯỚNG NGAY LẬP TỨC ===
 st.markdown(f"""
-<meta http-equiv="refresh" content="0.5; url={auth_url}">
-
-<script>
-// Phương án dự phòng nếu meta refresh không chạy
-setTimeout(function() {{
-    window.location.replace("{auth_url}");
-}}, 800);
-</script>
+<meta http-equiv="refresh" content="0; url={auth_url}">
+<script>window.location.replace("{auth_url}");</script>
 """, unsafe_allow_html=True)
 
-# Nút dự phòng
-st.markdown(f"[👉 Nhấp vào đây nếu không tự động chuyển hướng]({auth_url})")
+# Chỉ hiển thị khi trình duyệt chặn tự động chuyển
+st.warning("⏳ Đang chuyển hướng đến Facebook...")
+st.markdown(f"### 👉 [Nhấp vào đây nếu không tự động chuyển]({auth_url})")
